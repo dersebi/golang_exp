@@ -9,9 +9,9 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"exp/norm"
 	"flag"
 	"fmt"
+	"github.com/dersebi/golang_exp/exp/norm"
 	"io"
 	"log"
 	"net/http"
