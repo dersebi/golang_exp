@@ -6,9 +6,9 @@ package main
 
 import (
 	"bytes"
+	"github.com/dersebi/golang_exp/exp/ebnf"
 	"flag"
 	"fmt"
-	"github.com/dersebi/golang_exp/exp/ebnf"
 	"go/scanner"
 	"go/token"
 	"io"

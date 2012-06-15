@@ -22,6 +22,7 @@ const (
 	defaultSecondary = 0x20
 	defaultTertiary  = 0x2
 	maxTertiary      = 0x1F
+	maxQuaternary    = 0x1FFFFF // 21 bits.
 )
 
 // colElem is a representation of a collation element.
@@ -68,17 +69,18 @@ func (ce colElem) ctype() ceType {
 // For normal collation elements, we assume that a collation element either has
 // a primary or non-default secondary value, not both.
 // Collation elements with a primary value are of the form
-// 010ppppp pppppppp pppppppp tttttttt, where
+// 000ppppp pppppppp pppppppp tttttttt, where
 //   - p* is primary collation value
 //   - t* is the tertiary collation value
 // Collation elements with a secondary value are of the form
-// 00000000 ssssssss ssssssss tttttttt, where
+// 01000000 ssssssss ssssssss tttttttt, where
 //   - s* is the secondary collation value
 //   - t* is the tertiary collation value
 func splitCE(ce colElem) weights {
+	const secondaryMask = 0x40000000
 	w := weights{}
 	w.tertiary = uint8(ce)
-	if ce&0x40000000 != 0 {
+	if ce&secondaryMask == 0 {
 		// primary weight form
 		w.primary = uint32((ce >> 8) & 0x1FFFFF)
 		w.secondary = defaultSecondary
@@ -100,7 +102,7 @@ const (
 )
 
 func splitContractIndex(ce colElem) (index, n, offset int) {
-	h := uint16(ce)
+	h := ce & 0xffff
 	return int(h >> maxNBits), int(h & (1<<maxNBits - 1)), int(ce>>16) & (1<<maxContractOffsetBits - 1)
 }
 
@@ -144,7 +146,8 @@ const (
 	commonUnifiedOffset = 0xFB40
 	rareUnifiedOffset   = 0x1FB40
 	otherOffset         = 0x4FB40
-	maxPrimary          = otherOffset + unicode.MaxRune
+	illegalOffset       = otherOffset + unicode.MaxRune
+	maxPrimary          = illegalOffset + 1
 )
 
 // implicitPrimary returns the primary weight for the a rune
@@ -153,17 +156,16 @@ const (
 // http://unicode.org/reports/tr10/#Implicit_Weights,
 // but preserve the resulting relative ordering of the runes.
 func implicitPrimary(r rune) int {
-
-	if r >= minUnified && r <= maxUnified {
-		// The most common case for CJK.
-		return int(r) + commonUnifiedOffset
-	}
-	if r >= minCompatibility && r <= maxCompatibility {
-		// This will never hit as long as we don't remove the characters
-		// that would match from the table.
-		return int(r) + commonUnifiedOffset
-	}
-	if unicode.Is(unicode.Unified_Ideograph, r) {
+	if unicode.Is(unicode.Ideographic, r) {
+		if r >= minUnified && r <= maxUnified {
+			// The most common case for CJK.
+			return int(r) + commonUnifiedOffset
+		}
+		if r >= minCompatibility && r <= maxCompatibility {
+			// This will typically not hit. The DUCET explicitly specifies mappings
+			// for all characters that do not decompose.
+			return int(r) + commonUnifiedOffset
+		}
 		return int(r) + rareUnifiedOffset
 	}
 	return int(r) + otherOffset

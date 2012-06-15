@@ -20,14 +20,14 @@ func makeCE(weights []int) colElem {
 		maxPrimaryBits   = 21
 		maxSecondaryBits = 16
 		maxTertiaryBits  = 8
-		isPrimary        = 0x40000000
+		isSecondary      = 0x40000000
 	)
 	var ce colElem
 	if weights[0] != 0 {
 		ce = colElem(weights[0]<<maxTertiaryBits + weights[2])
-		ce |= isPrimary
 	} else {
 		ce = colElem(weights[1]<<maxTertiaryBits + weights[2])
+		ce |= isSecondary
 	}
 	return ce
 }
@@ -141,7 +141,7 @@ var implicitTests = []implicitTest{
 	{0xF8FF, 0x5F43F},
 	{0xF900, 0x1F440},
 	{0xFA23, 0x1F563},
-	{0xFAFF, 0x1F63F},
+	{0xFAD9, 0x1F619},
 	{0xFB00, 0x5F640},
 	{0x20000, 0x3FB40},
 	{0x2B81C, 0x4B35C},
