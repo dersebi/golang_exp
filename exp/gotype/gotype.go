@@ -6,7 +6,7 @@ package main
 
 import (
 	"errors"
-	"github.com/dersebi/golang_exp/types"
+	"github.com/dersebi/golang_exp/exp/types"
 	"flag"
 	"fmt"
 	"go/ast"

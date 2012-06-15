@@ -6,7 +6,7 @@ package html
 
 import (
 	"bytes"
-	"github.com/dersebi/golang_exp/html/atom"
+	"github.com/dersebi/golang_exp/exp/html/atom"
 	"io"
 	"strconv"
 	"strings"

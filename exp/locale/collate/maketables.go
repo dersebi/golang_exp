@@ -11,8 +11,8 @@ package main
 
 import (
 	"bufio"
-	"github.com/dersebi/golang_exp/locale/collate"
-	"github.com/dersebi/golang_exp/locale/collate/build"
+	"github.com/dersebi/golang_exp/exp/locale/collate"
+	"github.com/dersebi/golang_exp/exp/locale/collate/build"
 	"flag"
 	"fmt"
 	"io"
@@ -173,7 +173,7 @@ func main() {
 	fmt.Println("")
 	fmt.Println("package collate")
 	fmt.Println("")
-	fmt.Println(`import "github.com/dersebi/golang_exp/norm"`)
+	fmt.Println(`import "github.com/dersebi/golang_exp/exp/norm"`)
 	fmt.Println("")
 
 	c := &collate.Collator{}

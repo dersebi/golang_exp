@@ -8,7 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"github.com/dersebi/golang_exp/html/atom"
+	"github.com/dersebi/golang_exp/exp/html/atom"
 	"flag"
 	"fmt"
 	"io"

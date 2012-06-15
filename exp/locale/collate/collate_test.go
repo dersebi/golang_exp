@@ -6,7 +6,7 @@ package collate_test
 
 import (
 	"bytes"
-	"github.com/dersebi/golang_exp/locale/collate"
+	"github.com/dersebi/golang_exp/exp/locale/collate"
 	"testing"
 )
 

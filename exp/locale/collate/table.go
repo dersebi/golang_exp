@@ -5,7 +5,7 @@
 package collate
 
 import (
-	"github.com/dersebi/golang_exp/norm"
+	"github.com/dersebi/golang_exp/exp/norm"
 	"unicode/utf8"
 )
 

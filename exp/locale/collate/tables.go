@@ -5,7 +5,7 @@
 
 package collate
 
-import "github.com/dersebi/golang_exp/norm"
+import "github.com/dersebi/golang_exp/exp/norm"
 
 var _Root = Collator{
 	Strength:    3,

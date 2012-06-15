@@ -6,7 +6,7 @@ package html
 
 import (
 	"errors"
-	a "github.com/dersebi/golang_exp/html/atom"
+	a "github.com/dersebi/golang_exp/exp/html/atom"
 	"fmt"
 	"io"
 	"strings"

@@ -5,9 +5,9 @@
 package collate_test
 
 import (
-	"github.com/dersebi/golang_exp/locale/collate"
-	"github.com/dersebi/golang_exp/locale/collate/build"
-	"github.com/dersebi/golang_exp/norm"
+	"github.com/dersebi/golang_exp/exp/locale/collate"
+	"github.com/dersebi/golang_exp/exp/locale/collate/build"
+	"github.com/dersebi/golang_exp/exp/norm"
 	"testing"
 )
 

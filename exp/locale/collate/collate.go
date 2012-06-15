@@ -9,7 +9,7 @@ package collate
 
 import (
 	"bytes"
-	"github.com/dersebi/golang_exp/norm"
+	"github.com/dersebi/golang_exp/exp/norm"
 )
 
 // Level identifies the collation comparison level.

@@ -5,8 +5,8 @@
 package build
 
 import (
-	"github.com/dersebi/golang_exp/locale/collate"
-	"github.com/dersebi/golang_exp/norm"
+	"github.com/dersebi/golang_exp/exp/locale/collate"
+	"github.com/dersebi/golang_exp/exp/norm"
 	"fmt"
 	"io"
 	"log"

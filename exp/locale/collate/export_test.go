@@ -7,7 +7,7 @@ package collate
 // Export for testing.
 
 import (
-	"github.com/dersebi/golang_exp/norm"
+	"github.com/dersebi/golang_exp/exp/norm"
 	"fmt"
 )
 
