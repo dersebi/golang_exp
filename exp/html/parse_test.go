@@ -45,7 +45,10 @@ func readParseTest(r *bufio.Reader) (text, want, context string, err error) {
 		}
 		b = append(b, line...)
 	}
-	text = strings.TrimRight(string(b), "\n")
+	text = string(b)
+	if strings.HasSuffix(text, "\n") {
+		text = text[:len(text)-1]
+	}
 	b = b[:0]
 
 	// Skip the error list.
@@ -386,9 +389,28 @@ var renderTestBlacklist = map[string]bool{
 	`<a href="blah">aba<table><a href="foo">br<tr><td></td></tr>x</table>aoe`: true,
 	`<a><table><a></table><p><a><div><a>`:                                     true,
 	`<a><table><td><a><table></table><a></tr><a></table><a>`:                  true,
+	// A similar reparenting situation involving <nobr>:
+	`<!DOCTYPE html><body><b><nobr>1<table><nobr></b><i><nobr>2<nobr></i>3`: true,
 	// A <plaintext> element is reparented, putting it before a table.
 	// A <plaintext> element can't have anything after it in HTML.
 	`<table><plaintext><td>`: true,
+	// A script that ends at EOF may escape its own closing tag when rendered.
+	`<!doctype html><script><!--<script `:          true,
+	`<!doctype html><script><!--<script <a`:        true,
+	`<!doctype html><script><!--<script </script`:  true,
+	`<!doctype html><script><!--<script </scripta`: true,
+	`<!doctype html><script><!--<script -`:         true,
+	`<!doctype html><script><!--<script -a`:        true,
+	`<!doctype html><script><!--<script --`:        true,
+	`<!doctype html><script><!--<script --a`:       true,
+	`<script><!--<script `:                         true,
+	`<script><!--<script <a`:                       true,
+	`<script><!--<script </script`:                 true,
+	`<script><!--<script </scripta`:                true,
+	`<script><!--<script -`:                        true,
+	`<script><!--<script -a`:                       true,
+	`<script><!--<script --`:                       true,
+	`<script><!--<script --a`:                      true,
 }
 
 func TestNodeConsistency(t *testing.T) {

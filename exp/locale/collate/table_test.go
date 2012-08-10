@@ -42,13 +42,9 @@ func pt(p, t int) []int {
 func makeTable(in []input) (*collate.Collator, error) {
 	b := build.NewBuilder()
 	for _, r := range in {
-		b.Add([]rune(r.str), r.ces)
+		b.Add([]rune(r.str), r.ces, nil)
 	}
-	c, err := b.Build("")
-	if err == nil {
-		collate.InitCollator(c)
-	}
-	return c, err
+	return b.Build()
 }
 
 // modSeq holds a seqeunce of modifiers in increasing order of CCC long enough
@@ -84,10 +80,10 @@ var appendNextTests = []tableTest{
 			{"a", 1, ColElems{w(100)}},
 			{"b", 1, ColElems{w(105)}},
 			{"c", 1, ColElems{w(110)}},
-			{"d", 1, ColElems{w(0x4FBA4)}},
+			{"d", 1, ColElems{w(0x50064)}},
 			{"ab", 1, ColElems{w(100)}},
 			{"bc", 1, ColElems{w(105)}},
-			{"dd", 1, ColElems{w(0x4FBA4)}},
+			{"dd", 1, ColElems{w(0x50064)}},
 			{"ß", 2, ColElems{w(120)}},
 		},
 	},

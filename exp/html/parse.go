@@ -42,6 +42,8 @@ type parser struct {
 	fosterParenting bool
 	// quirks is whether the parser is operating in "quirks mode."
 	quirks bool
+	// fragment is whether the parser is parsing an HTML fragment.
+	fragment bool
 	// context is the context element when parsing an HTML fragment
 	// (section 12.4).
 	context *Node
@@ -208,7 +210,7 @@ loop:
 // addChild adds a child node n to the top element, and pushes n onto the stack
 // of open elements if it is an element node.
 func (p *parser) addChild(n *Node) {
-	if p.fosterParenting {
+	if p.shouldFosterParent() {
 		p.fosterParent(n)
 	} else {
 		p.top().Add(n)
@@ -219,10 +221,21 @@ func (p *parser) addChild(n *Node) {
 	}
 }
 
+// shouldFosterParent returns whether the next node to be added should be
+// foster parented.
+func (p *parser) shouldFosterParent() bool {
+	if p.fosterParenting {
+		switch p.top().DataAtom {
+		case a.Table, a.Tbody, a.Tfoot, a.Thead, a.Tr:
+			return true
+		}
+	}
+	return false
+}
+
 // fosterParent adds a child node according to the foster parenting rules.
 // Section 12.2.5.3, "foster parenting".
 func (p *parser) fosterParent(n *Node) {
-	p.fosterParenting = false
 	var table, parent *Node
 	var i int
 	for i = len(p.oe) - 1; i >= 0; i-- {
@@ -267,7 +280,18 @@ func (p *parser) fosterParent(n *Node) {
 // addText adds text to the preceding node if it is a text node, or else it
 // calls addChild with a new text node.
 func (p *parser) addText(text string) {
-	// TODO: distinguish whitespace text from others.
+	if text == "" {
+		return
+	}
+
+	if p.shouldFosterParent() {
+		p.fosterParent(&Node{
+			Type: TextNode,
+			Data: text,
+		})
+		return
+	}
+
 	t := p.top()
 	if i := len(t.Child); i > 0 && t.Child[i-1].Type == TextNode {
 		t.Child[i-1].Data += text
@@ -387,6 +411,10 @@ func (p *parser) reconstructActiveFormattingElements() {
 
 // read reads the next token from the tokenizer.
 func (p *parser) read() error {
+	// CDATA sections are allowed only in foreign content.
+	n := p.oe.top()
+	p.tokenizer.cdataOK = n != nil && n.Namespace != ""
+
 	p.tokenizer.Next()
 	p.tok = p.tokenizer.Token()
 	if p.tok.Type == ErrorToken {
@@ -655,7 +683,7 @@ func afterHeadIM(p *parser) bool {
 			return true
 		case a.Base, a.Basefont, a.Bgsound, a.Link, a.Meta, a.Noframes, a.Script, a.Style, a.Title:
 			p.oe = append(p.oe, p.head)
-			defer p.oe.pop()
+			defer p.oe.remove(p.head)
 			return inHeadIM(p)
 		case a.Head:
 			// Ignore the token.
@@ -725,7 +753,10 @@ func inBodyIM(p *parser) bool {
 		}
 		p.reconstructActiveFormattingElements()
 		p.addText(d)
-		p.framesetOK = false
+		if p.framesetOK && strings.TrimLeft(d, whitespace) != "" {
+			// There were non-whitespace characters inserted.
+			p.framesetOK = false
+		}
 	case StartTagToken:
 		switch p.tok.DataAtom {
 		case a.Html:
@@ -968,6 +999,10 @@ func inBodyIM(p *parser) bool {
 			adjustForeignAttributes(p.tok.Attr)
 			p.addElement()
 			p.top().Namespace = p.tok.Data
+			if p.hasSelfClosingToken {
+				p.oe.pop()
+				p.acknowledgeSelfClosingTag()
+			}
 			return true
 		case a.Caption, a.Col, a.Colgroup, a.Frame, a.Head, a.Tbody, a.Td, a.Tfoot, a.Th, a.Thead, a.Tr:
 			// Ignore the token.
@@ -1298,11 +1333,8 @@ func inTableIM(p *parser) bool {
 		return true
 	}
 
-	switch p.top().DataAtom {
-	case a.Table, a.Tbody, a.Tfoot, a.Thead, a.Tr:
-		p.fosterParenting = true
-		defer func() { p.fosterParenting = false }()
-	}
+	p.fosterParenting = true
+	defer func() { p.fosterParenting = false }()
 
 	return inBodyIM(p)
 }
@@ -1592,6 +1624,8 @@ func inSelectIM(p *parser) bool {
 				return false
 			}
 			// Ignore the token.
+			// In order to properly ignore <textarea>, we need to change the tokenizer mode.
+			p.tokenizer.rawTag = ""
 			return true
 		case a.Script:
 			return inHeadIM(p)
@@ -1664,7 +1698,9 @@ func afterBodyIM(p *parser) bool {
 		}
 	case EndTagToken:
 		if p.tok.DataAtom == a.Html {
-			p.im = afterAfterBodyIM
+			if !p.fragment {
+				p.im = afterAfterBodyIM
+			}
 			return true
 		}
 	case CommentToken:
@@ -1836,14 +1872,16 @@ func afterAfterFramesetIM(p *parser) bool {
 	return true
 }
 
+const whitespaceOrNUL = whitespace + "\x00"
+
 // Section 12.2.5.5.
 func parseForeignContent(p *parser) bool {
 	switch p.tok.Type {
 	case TextToken:
-		p.tok.Data = strings.Replace(p.tok.Data, "\x00", "", -1)
 		if p.framesetOK {
-			p.framesetOK = strings.TrimLeft(p.tok.Data, whitespace) == ""
+			p.framesetOK = strings.TrimLeft(p.tok.Data, whitespaceOrNUL) == ""
 		}
+		p.tok.Data = strings.Replace(p.tok.Data, "\x00", "\ufffd", -1)
 		p.addText(p.tok.Data)
 	case CommentToken:
 		p.addChild(&Node{
@@ -1890,6 +1928,11 @@ func parseForeignContent(p *parser) bool {
 		namespace := p.top().Namespace
 		p.addElement()
 		p.top().Namespace = namespace
+		if namespace != "" {
+			// Don't let the tokenizer go into raw text mode in foreign content
+			// (e.g. in an SVG <title> tag).
+			p.tokenizer.rawTag = ""
+		}
 		if p.hasSelfClosingToken {
 			p.oe.pop()
 			p.acknowledgeSelfClosingTag()
@@ -1972,8 +2015,8 @@ func (p *parser) parseCurrentToken() {
 	}
 
 	if p.hasSelfClosingToken {
+		// This is a parse error, but ignore it.
 		p.hasSelfClosingToken = false
-		p.parseImpliedToken(EndTagToken, p.tok.DataAtom, p.tok.Data)
 	}
 }
 
@@ -2019,6 +2062,7 @@ func ParseFragment(r io.Reader, context *Node) ([]*Node, error) {
 			Type: DocumentNode,
 		},
 		scripting: true,
+		fragment:  true,
 		context:   context,
 	}
 
