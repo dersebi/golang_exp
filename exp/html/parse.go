@@ -398,20 +398,6 @@ func (p *parser) reconstructActiveFormattingElements() {
 	}
 }
 
-// read reads the next token from the tokenizer.
-func (p *parser) read() error {
-	// CDATA sections are allowed only in foreign content.
-	n := p.oe.top()
-	p.tokenizer.cdataOK = n != nil && n.Namespace != ""
-
-	p.tokenizer.Next()
-	p.tok = p.tokenizer.Token()
-	if p.tok.Type == ErrorToken {
-		return p.tokenizer.Err()
-	}
-	return nil
-}
-
 // Section 12.2.4.
 func (p *parser) acknowledgeSelfClosingTag() {
 	p.hasSelfClosingToken = false
@@ -1613,9 +1599,9 @@ func inSelectIM(p *parser) bool {
 				p.parseImpliedToken(EndTagToken, a.Select, a.Select.String())
 				return false
 			}
-			// Ignore the token.
 			// In order to properly ignore <textarea>, we need to change the tokenizer mode.
-			p.tokenizer.rawTag = ""
+			p.tokenizer.NextIsNotRawText()
+			// Ignore the token.
 			return true
 		case a.Script:
 			return inHeadIM(p)
@@ -1921,7 +1907,7 @@ func parseForeignContent(p *parser) bool {
 		if namespace != "" {
 			// Don't let the tokenizer go into raw text mode in foreign content
 			// (e.g. in an SVG <title> tag).
-			p.tokenizer.rawTag = ""
+			p.tokenizer.NextIsNotRawText()
 		}
 		if p.hasSelfClosingToken {
 			p.oe.pop()
@@ -2014,9 +2000,17 @@ func (p *parser) parse() error {
 	// Iterate until EOF. Any other error will cause an early return.
 	var err error
 	for err != io.EOF {
-		err = p.read()
-		if err != nil && err != io.EOF {
-			return err
+		// CDATA sections are allowed only in foreign content.
+		n := p.oe.top()
+		p.tokenizer.AllowCDATA(n != nil && n.Namespace != "")
+		// Read and parse the next token.
+		p.tokenizer.Next()
+		p.tok = p.tokenizer.Token()
+		if p.tok.Type == ErrorToken {
+			err = p.tokenizer.Err()
+			if err != nil && err != io.EOF {
+				return err
+			}
 		}
 		p.parseCurrentToken()
 	}
@@ -2046,16 +2040,7 @@ func Parse(r io.Reader) (*Node, error) {
 // found. If the fragment is the InnerHTML for an existing element, pass that
 // element in context.
 func ParseFragment(r io.Reader, context *Node) ([]*Node, error) {
-	p := &parser{
-		tokenizer: NewTokenizer(r),
-		doc: &Node{
-			Type: DocumentNode,
-		},
-		scripting: true,
-		fragment:  true,
-		context:   context,
-	}
-
+	contextTag := ""
 	if context != nil {
 		if context.Type != ElementNode {
 			return nil, errors.New("html: ParseFragment of non-element Node")
@@ -2066,10 +2051,16 @@ func ParseFragment(r io.Reader, context *Node) ([]*Node, error) {
 		if context.DataAtom != a.Lookup([]byte(context.Data)) {
 			return nil, fmt.Errorf("html: inconsistent Node: DataAtom=%q, Data=%q", context.DataAtom, context.Data)
 		}
-		switch context.DataAtom {
-		case a.Iframe, a.Noembed, a.Noframes, a.Noscript, a.Plaintext, a.Script, a.Style, a.Title, a.Textarea, a.Xmp:
-			p.tokenizer.rawTag = context.DataAtom.String()
-		}
+		contextTag = context.DataAtom.String()
+	}
+	p := &parser{
+		tokenizer: NewTokenizerFragment(r, contextTag),
+		doc: &Node{
+			Type: DocumentNode,
+		},
+		scripting: true,
+		fragment:  true,
+		context:   context,
 	}
 
 	root := &Node{
