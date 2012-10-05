@@ -23,8 +23,6 @@ import (
 	"text/scanner"
 )
 
-const trace = false // set to true for debugging
-
 var pkgExts = [...]string{".a", ".5", ".6", ".8"}
 
 // FindPkg returns the filename and unique package id for an import
@@ -42,8 +40,7 @@ func FindPkg(path, srcDir string) (filename, id string) {
 	switch {
 	default:
 		// "x" -> "$GOPATH/pkg/$GOOS_$GOARCH/x.ext", "x"
-		// Don't require the source files to be present.
-		bp, _ := build.Import(path, srcDir, build.FindOnly|build.AllowBinary)
+		bp, _ := build.Import(path, srcDir, build.FindOnly)
 		if bp.PkgObj == "" {
 			return
 		}
@@ -182,7 +179,7 @@ func (p *gcParser) init(filename, id string, src io.Reader, imports map[string]*
 func (p *gcParser) next() {
 	p.tok = p.scanner.Scan()
 	switch p.tok {
-	case scanner.Ident, scanner.Int, scanner.String, '·':
+	case scanner.Ident, scanner.Int, scanner.Char, scanner.String, '·':
 		p.lit = p.scanner.TokenText()
 	default:
 		p.lit = ""
@@ -207,10 +204,10 @@ func (p *gcParser) declare(scope *ast.Scope, kind ast.ObjKind, name string) *ast
 		p.errorf("already declared: %v %s", kind, obj.Name)
 	}
 
-	// a new type object is a named type and may be referred
+	// if the new type object is a named type it may be referred
 	// to before the underlying type is known - set it up
 	if kind == ast.Typ {
-		obj.Type = &Name{Obj: obj}
+		obj.Type = &NamedType{Obj: obj}
 	}
 
 	return obj
@@ -244,7 +241,6 @@ func (p *gcParser) errorf(format string, args ...interface{}) {
 func (p *gcParser) expect(tok rune) string {
 	lit := p.lit
 	if p.tok != tok {
-		panic(1)
 		p.errorf("expected %s, got %s (%s)", scanner.TokenString(tok), scanner.TokenString(p.tok), lit)
 	}
 	p.next()
@@ -350,7 +346,7 @@ func (p *gcParser) parseArrayType() Type {
 	lit := p.expect(scanner.Int)
 	p.expect(']')
 	elt := p.parseType()
-	n, err := strconv.ParseUint(lit, 10, 64)
+	n, err := strconv.ParseInt(lit, 10, 64)
 	if err != nil {
 		p.error(err)
 	}
@@ -389,34 +385,32 @@ func (p *gcParser) parseName() (name string) {
 
 // Field = Name Type [ string_lit ] .
 //
-func (p *gcParser) parseField() (fld *ast.Object, tag string) {
-	name := p.parseName()
-	ftyp := p.parseType()
-	if name == "" {
-		// anonymous field - ftyp must be T or *T and T must be a type name
-		if _, ok := Deref(ftyp).(*Name); !ok {
+func (p *gcParser) parseField() *StructField {
+	var f StructField
+	f.Name = p.parseName()
+	f.Type = p.parseType()
+	if p.tok == scanner.String {
+		f.Tag = p.expect(scanner.String)
+	}
+	if f.Name == "" {
+		// anonymous field - typ must be T or *T and T must be a type name
+		if typ, ok := deref(f.Type).(*NamedType); ok && typ.Obj != nil {
+			f.Name = typ.Obj.Name
+		} else {
 			p.errorf("anonymous field expected")
 		}
 	}
-	if p.tok == scanner.String {
-		tag = p.expect(scanner.String)
-	}
-	fld = ast.NewObj(ast.Var, name)
-	fld.Type = ftyp
-	return
+	return &f
 }
 
 // StructType = "struct" "{" [ FieldList ] "}" .
 // FieldList  = Field { ";" Field } .
 //
 func (p *gcParser) parseStructType() Type {
-	var fields []*ast.Object
-	var tags []string
+	var fields []*StructField
 
 	parseField := func() {
-		fld, tag := p.parseField()
-		fields = append(fields, fld)
-		tags = append(tags, tag)
+		fields = append(fields, p.parseField())
 	}
 
 	p.expectKeyword("struct")
@@ -430,7 +424,7 @@ func (p *gcParser) parseStructType() Type {
 	}
 	p.expect('}')
 
-	return &Struct{Fields: fields, Tags: tags}
+	return &Struct{Fields: fields}
 }
 
 // Parameter = ( identifier | "?" ) [ "..." ] Type [ string_lit ] .
@@ -445,7 +439,7 @@ func (p *gcParser) parseParameter() (par *ast.Object, isVariadic bool) {
 		isVariadic = true
 	}
 	ptyp := p.parseType()
-	// ignore argument tag
+	// ignore argument tag (e.g. "noescape")
 	if p.tok == scanner.String {
 		p.expect(scanner.String)
 	}
@@ -485,7 +479,7 @@ func (p *gcParser) parseParameters() (list []*ast.Object, isVariadic bool) {
 // Signature = Parameters [ Result ] .
 // Result    = Type | Parameters .
 //
-func (p *gcParser) parseSignature() *Func {
+func (p *gcParser) parseSignature() *Signature {
 	params, isVariadic := p.parseParameters()
 
 	// optional result type
@@ -505,7 +499,7 @@ func (p *gcParser) parseSignature() *Func {
 		}
 	}
 
-	return &Func{Params: params, Results: results, IsVariadic: isVariadic}
+	return &Signature{Params: params, Results: results, IsVariadic: isVariadic}
 }
 
 // InterfaceType = "interface" "{" [ MethodList ] "}" .
@@ -635,11 +629,11 @@ func (p *gcParser) parseImportDecl() {
 
 // int_lit = [ "+" | "-" ] { "0" ... "9" } .
 //
-func (p *gcParser) parseInt() (sign, val string) {
+func (p *gcParser) parseInt() (neg bool, val string) {
 	switch p.tok {
 	case '-':
-		p.next()
-		sign = "-"
+		neg = true
+		fallthrough
 	case '+':
 		p.next()
 	}
@@ -649,37 +643,48 @@ func (p *gcParser) parseInt() (sign, val string) {
 
 // number = int_lit [ "p" int_lit ] .
 //
-func (p *gcParser) parseNumber() Const {
+func (p *gcParser) parseNumber() (x operand) {
+	x.mode = constant
+
 	// mantissa
-	sign, val := p.parseInt()
-	mant, ok := new(big.Int).SetString(sign+val, 0)
+	neg, val := p.parseInt()
+	mant, ok := new(big.Int).SetString(val, 0)
 	assert(ok)
+	if neg {
+		mant.Neg(mant)
+	}
 
 	if p.lit == "p" {
 		// exponent (base 2)
 		p.next()
-		sign, val = p.parseInt()
+		neg, val = p.parseInt()
 		exp64, err := strconv.ParseUint(val, 10, 0)
 		if err != nil {
 			p.error(err)
 		}
 		exp := uint(exp64)
-		if sign == "-" {
+		if neg {
 			denom := big.NewInt(1)
 			denom.Lsh(denom, exp)
-			return Const{new(big.Rat).SetFrac(mant, denom)}
+			x.typ = Typ[UntypedFloat]
+			x.val = normalizeRatConst(new(big.Rat).SetFrac(mant, denom))
+			return
 		}
 		if exp > 0 {
 			mant.Lsh(mant, exp)
 		}
-		return Const{new(big.Rat).SetInt(mant)}
+		x.typ = Typ[UntypedFloat]
+		x.val = normalizeIntConst(mant)
+		return
 	}
 
-	return Const{mant}
+	x.typ = Typ[UntypedInt]
+	x.val = normalizeIntConst(mant)
+	return
 }
 
 // ConstDecl   = "const" ExportedName [ Type ] "=" Literal .
-// Literal     = bool_lit | int_lit | float_lit | complex_lit | string_lit .
+// Literal     = bool_lit | int_lit | float_lit | complex_lit | rune_lit | string_lit .
 // bool_lit    = "true" | "false" .
 // complex_lit = "(" float_lit "+" float_lit ")" .
 // rune_lit = "(" int_lit "+" int_lit ")" .
@@ -689,8 +694,7 @@ func (p *gcParser) parseConstDecl() {
 	p.expectKeyword("const")
 	pkg, name := p.parseExportedName()
 	obj := p.declare(pkg.Data.(*ast.Scope), ast.Con, name)
-	var x Const
-	var typ Type
+	var x operand
 	if p.tok != '=' {
 		obj.Type = p.parseType()
 	}
@@ -701,48 +705,52 @@ func (p *gcParser) parseConstDecl() {
 		if p.lit != "true" && p.lit != "false" {
 			p.error("expected true or false")
 		}
-		x = Const{p.lit == "true"}
-		typ = Bool.Underlying
+		x.typ = Typ[UntypedBool]
+		x.val = p.lit == "true"
 		p.next()
+
 	case '-', scanner.Int:
 		// int_lit
 		x = p.parseNumber()
-		typ = Int.Underlying
-		if _, ok := x.val.(*big.Rat); ok {
-			typ = Float64.Underlying
-		}
+
 	case '(':
 		// complex_lit or rune_lit
 		p.next()
 		if p.tok == scanner.Char {
 			p.next()
 			p.expect('+')
-			p.parseNumber()
+			x = p.parseNumber()
+			x.typ = Typ[UntypedRune]
 			p.expect(')')
-			// TODO: x = ...
 			break
 		}
 		re := p.parseNumber()
 		p.expect('+')
 		im := p.parseNumber()
 		p.expect(')')
-		x = Const{cmplx{re.val.(*big.Rat), im.val.(*big.Rat)}}
-		typ = Complex128.Underlying
+		x.typ = Typ[UntypedComplex]
+		// TODO(gri) fix this
+		_, _ = re, im
+		x.val = zeroConst
+
 	case scanner.Char:
-		// TODO: x = ...
+		// rune_lit
+		x.setConst(token.CHAR, p.lit)
 		p.next()
+
 	case scanner.String:
 		// string_lit
-		x = MakeConst(token.STRING, p.lit)
+		x.setConst(token.STRING, p.lit)
 		p.next()
-		typ = String.Underlying
+
 	default:
 		p.errorf("expected literal got %s", scanner.TokenString(p.tok))
 	}
 	if obj.Type == nil {
-		obj.Type = typ
+		obj.Type = x.typ
 	}
-	obj.Data = x
+	assert(x.val != nil)
+	obj.Data = x.val
 }
 
 // TypeDecl = "type" ExportedName Type .
@@ -759,8 +767,7 @@ func (p *gcParser) parseTypeDecl() {
 	// a given type declaration.
 	typ := p.parseType()
 
-	if name := obj.Type.(*Name); name.Underlying == nil {
-		assert(Underlying(typ) == typ)
+	if name := obj.Type.(*NamedType); name.Underlying == nil {
 		name.Underlying = typ
 	}
 }
